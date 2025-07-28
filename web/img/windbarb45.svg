@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+    <style type="text/css">
+        .svg-wb{fill:#1A232D;stroke:#1A232D;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:10;}
+    </style>
+    <path class="svg-wb" d="M1,50V10 M1,10l12-12 M1,17l12-12 M1,24l12-12 M1,31l12-12 M1,38l6-6"/>
+</svg>

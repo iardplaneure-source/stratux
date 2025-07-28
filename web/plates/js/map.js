@@ -8,6 +8,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 	$scope.$parent.helppage = 'plates/radar-help.html';
 
 	$scope.aircraftSymbols = new ol.source.Vector();
+	$scope.metarSymbols = new ol.source.Vector();
 	$scope.aircraftTrails = new ol.source.Vector();
 
 	let osm = new ol.layer.Tile({
@@ -84,6 +85,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		}
 		$scope.map.addLayer(aircraftSymbolsLayer);
 		$scope.map.addLayer(aircraftTrailsLayer);
+		$scope.map.addLayer(metarSymbolLayer);
 
 		// Restore layer visibility
 		$scope.map.getLayers().forEach((layer) => {
@@ -107,7 +109,6 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			});
 		});
 	});
-
 	let aircraftSymbolsLayer = new ol.layer.Vector({
 		title: 'Aircraft symbols',
 		source: $scope.aircraftSymbols,
@@ -118,6 +119,11 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		source: $scope.aircraftTrails,
 		zIndex: 9
 	});
+	let metarSymbolLayer = new ol.layer.Vector({
+		title: 'METAR symbols',
+		source: $scope.metarSymbols,
+		zIndex: 8
+	});
 
 	$scope.map = new ol.Map({
 		target: 'map_display',
@@ -126,14 +132,74 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			openaip
 		],
 		view: new ol.View({
-			center: ol.proj.fromLonLat([10.0, 52.0]),
-			zoom: 4,
+			center: ol.proj.fromLonLat([-88.0, 42.0]),
+			zoom: 7,
 			enableRotation: false
 		})
 	});
+	const container = document.getElementById('popup');
+	const content = document.getElementById('popup-content');
+	const closer = document.getElementById('popup-closer');
+
+	const popup = new ol.Overlay({
+	element: container,
+	autoPan: true,
+	autoPanAnimation: {
+		duration: 250
+	}
+	});
+	$scope.map.addOverlay(popup);
+
+	closer.onclick = function () {
+	popup.setPosition(undefined);
+	closer.blur();
+	return false;
+	};	
 	$scope.map.addControl(new ol.control.LayerSwitcher());
-	
+	// change mouse cursor when over marker
+	$scope.map.on('pointermove', function (e) {
+		const hit = $scope.map.hasFeatureAtPixel(e.pixel);
+		$scope.map.getTargetElement().style.cursor = hit ? 'pointer' : '';
+	});
+	$scope.map.on('singleclick', function (evt) {
+		let featureFound = false;
+
+		$scope.map.forEachFeatureAtPixel(evt.pixel, function (feature, layer) {
+			if (layer && layer.get('title') === 'METAR symbols') {
+			const coord = feature.getGeometry().getCoordinates();
+			const result = $scope.metarList.find(m => m.marker === feature);
+			if (result) {
+				html = `
+				<div style="text-align: center;">
+				<div style="background-color: #cceeff; padding: 4px; border-radius: 4px; display: inline-block;">
+					<strong>${result.ICAO}</strong>
+					</div><br>
+					${result.name || ''}
+				</div>
+				METAR:<br>
+				<pre style="margin:0" font-size: 0.8em;>${result.Data}</pre>
+				`;
+				if (result.TAF) {
+					html = html + `<br><strong>TAF</strong><br><pre style="margin:0" font-size: 0.8em;>${result.TAF}</pre>`
+				}
+				if (result.WINDS) {
+					html = html + `<br><strong>WINDS</strong><br><pre style="margin:0" font-size: 0.8em;>${result.WINDS}</pre>`
+				}
+				content.innerHTML = html;
+				popup.setPosition(coord);
+				featureFound = true;
+			}
+			}
+		});
+
+		// If no feature was found under click, close the popup
+		if (!featureFound) {
+			popup.setPosition(undefined);
+			closer.blur();
+		}
+	});
 	$scope.aircraft = [];
+	$scope.metarList = [];
 
 	function connect($scope) {
 		if (($scope === undefined) || ($scope === null))
@@ -142,8 +208,8 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		if (($scope.socket === undefined) || ($scope.socket === null)) {
 			socket = new WebSocket(URL_TRAFFIC_WS);
 			$scope.socket = socket;                  // store socket in scope for enter/exit usage
-		
-		
+
+
 			$scope.ConnectState = 'Disconnected';
 
 			socket.onopen = function(msg) {
@@ -174,7 +240,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		if (($scope.socketgps === undefined) || ($scope.socketgps === null)) {
             var socketgps = new WebSocket(URL_GPS_WS);
             $scope.socketgps = socketgps; // store socket in scope for enter/exit usage
-        
+  
 
 			socketgps.onclose = function (msg) {
 				delete $scope.socketgps;
@@ -185,11 +251,92 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 				updateMyLocation(JSON.parse(msg.data));
 			};
 		}
+		if (($scope.socketWeather === undefined) || ($scope.socketWeather === null)) {
+			var socketWeather = new WebSocket(URL_WEATHER_WS);
+			$scope.socketWeather = socketWeather;
+
+			socketWeather.onclose = function (msg) {
+				delete $scope.socketWeather;
+				setTimeout(function() {connect($scope);}, 1000);
+			};
+
+			socketWeather.onmessage = function (msg) {
+				updateWeather(JSON.parse(msg.data));
+			};
+		}
 	}
 
 	/** 
 		Returns path to SVG icon and bool indicating if it's a rotatable icon (not ballon/skydiver)
 	 */
+	function createMETARSvg(value) {
+		let html = ``;
+		return ['img/actype/undef.svg'];
+	}
+	function getMetarColor(cond) {
+		switch (cond) {
+			case 0:
+				return "#ffffff";
+			case 1: // LIFR
+				return "#ff00ff";
+			case 2: // IFR
+				return "#FF0000";
+			case 3: // MVFR
+				return "#0000ff";
+			case 4: // VFR
+				return "#10cf20";
+			default:
+				return "#ffffff";
+		}
+	}
+
+	function parseFlightCondition(msg, body) {
+			if ((msg !== "METAR") && (msg !== "SPECI"))
+					return 0;
+
+			// check the visibility: a value preceeding 'SM' which is either a fraction or a whole number
+			// we don't care what value of fraction since anything below 1SM is LIFR
+
+			// BTW: now I know why no one wants to parse METARs - ther can be spaces in the numbers ARGH
+			// test for special case of 'X X/X'
+			var exp = new RegExp("([0-9]) ([0-9])/([0-9])SM");
+			var match = exp.exec(body);
+			if ((match !== null) && (match.length === 4)) {
+					visability = parseInt(match[1]) + (parseInt(match[2]) / parseInt(match[3]));
+			} else {
+					exp = new RegExp("([0-9/]{1,5}?)SM");
+					match = exp.exec(body);
+					if (match === null)
+							return 0;
+					// the only way we have 3 or more characters is if the '/' is present which means we need to do extra checking
+					if (match[1].length === 3)
+							return 1;
+					// do we have a usable visability distance
+					var visability = parseInt(match[1]);
+					if (visability === 0)
+							return 0;
+			}
+
+			// ceiling is at either the BKN or OVC layer
+			exp = new RegExp("BKN([0-9]{3})");
+			match = exp.exec(body);
+			if (match === null) {
+					exp = new RegExp("OVC([0-9]{3})");
+					match = exp.exec(body);
+			}
+			var ceiling = 999;
+			if (match !== null)
+					ceiling = parseInt(match[1]);
+
+			if ((visability > 5) && (ceiling > 30))
+					return 4;
+			if ((visability >= 3) && (ceiling >= 10))
+					return 3;
+			if ((visability >= 1) && (ceiling >= 5))
+					return 2;
+			return 1;
+	}
+
 	function createPlaneSvg(aircraft) {
 		let html = ``;
 		let color = craftService.getTransportColor(aircraft);	
@@ -343,7 +490,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		// 1 = non-icao, everything else = icao
 		if ((addrType1 == 1 && addrType2 == 1) || (addrType1 != 1 && addrType2 != 1))
 			return true;
-		
+
 		return false;
 	}
 
@@ -373,7 +520,6 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 				if (distance(prevRecordedPos[0], prevRecordedPos[1], aircraft.Lng, aircraft.Lat) > 0.1) {
 					aircraft.posHistory.push([aircraft.Lng, aircraft.Lat]);
 				}
-				
 				// At most 9.25km per aircraft
 				aircraft.posHistroy = clipPosHistory(aircraft, 9.25);
 
@@ -481,7 +627,135 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		source.getFeatures()[0].setGeometry(geom);
 	}
 
+	function findAirportByICAO(icao) {
+		return aplist.find(airport => airport.title === icao) ||
+		aplist.find(airport => "K" + airport.title === icao) ||
+		null;
+	}
 
+	function updateMetarLocation(location, lat, lng, data) {
+		const layer = getOrCreateMetarLayer(lat, lng);
+		const source = layer.getSource();
+
+		const geom = new ol.geom.Point(ol.proj.fromLonLat([lng, lat]));
+		source.getFeatures()[0].setGeometry(geom);
+	}
+
+	function updateWeather(msg) {
+		const msgType = msg.Type;
+		msgLocation = msg.Location;
+		const msgTime = msg.Time;
+		const msgData = msg.Data;
+		console.log("Received weather update type " + msgType + ". location is: " + msgLocation + " text:\n " + msgData);
+		if ((msgType == "WINDS")) {
+			// its a Wind report
+			msgLocation = "K" + msgLocation;
+			const result = findAirportByICAO(msgLocation);
+			if (result) {
+				result.ICAO = msgLocation;
+				result.WINDS = msgLocation + " " + msgData;
+				let updateIndex = -1;
+
+				for (let i in $scope.metarList) {
+					if ($scope.metarList[i].ICAO == result.ICAO) {
+						$scope.metarList[i] = result;
+						updateIndex = i;
+					}
+				}
+				if (updateIndex < 0) {
+					$scope.metarList.push(result);
+				}
+				console.log("Added WINDS to " + msgLocation + " Index " + updateIndex);
+			}
+		}
+		if ((msgType == "TAF") || (msgType == "TAF.AMD")) {
+			// its a TAF
+			const result = findAirportByICAO(msgLocation);
+			if (result) {
+				result.ICAO = msgLocation;
+				result.TAF = msgLocation + " " + msgData;
+				let updateIndex = -1;
+
+				for (let i in $scope.metarList) {
+					if ($scope.metarList[i].ICAO == result.ICAO) {
+						$scope.metarList[i] = result;
+						updateIndex = i;
+					}
+				}
+				if (updateIndex < 0) {
+					$scope.metarList.push(result);
+				}
+				console.log("Added TAF to " + msgLocation + " Index " + updateIndex);
+			}
+		}
+		if ((msgType == "METAR") || (msgType == "SPECI")) {
+			const result = findAirportByICAO(msgLocation);
+			if (result) {
+				result.ICAO = msgLocation;
+				result.Data = msgLocation + " " + msgData;
+				let updateIndex = -1;
+
+				for (let i in $scope.metarList) {
+					if ($scope.metarList[i].ICAO == result.ICAO) {
+						let oldMetar = $scope.metarList[i];
+						$scope.metarList[i] = result;
+						updateIndex = i;
+					}
+				}
+
+				if (updateIndex < 0) {
+					$scope.metarList.push(result);
+				}
+
+				let metarPosition = [result.lng, result.lat];
+				if (!result.marker) {
+					let metarStyle = new ol.style.Style({
+						text: new ol.style.Text({
+							text: result.ICAO,
+							offsetY: 10,
+							font: 'bold 1em sans-serif',
+							stroke: new ol.style.Stroke({color: 'white', width: 1.5}),
+						})
+					});
+					let metarFeature = new ol.Feature({
+						geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+					});
+					metarFeature.setStyle(metarStyle);
+
+					result.marker = metarFeature;
+					$scope.metarSymbols.addFeature(metarFeature);
+				} else {
+					result.marker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+				}
+				const cond = parseFlightCondition(msgType, msgData);
+				const icon = createMETARSvg(0);
+				const mcolor = getMetarColor(cond);
+				let imageStyle = new ol.style.Icon({
+					opacity: 1.0,
+					src: 'img/dot.svg',
+					color: mcolor,
+					scale: 2,
+					anchor: [0.5, 0.5],
+					anchorXUnits: 'fraction',
+					anchorYUnits: 'fraction'
+				});
+				result.marker.getStyle().setImage(imageStyle); // to update the color if latest source changed
+				//updateOpacity(result);
+				
+				//updateMetarLocation(result.ICAO, result.lat, result.lng, result.data);
+			} else {
+				console.log("Airport " + msgLocation + " not found!!!");
+			}
+		}
+//{"Type":"METAR","Location":"KGEZ","Time":"061953Z","Data":"AUTO 21013G20KT 10SM FEW120 31/22 A2992 RMK AO2  \n     SLP124 T03060222=\n","LocaltimeReceived":"0001-01-03T20:58:08.22Z"		
+	}
+/*
+    function getOrCreateMetarLayer(lat, lng) {
+		if ($scope.metarSymbolLayer)
+			return $scope.metarSymbolLayer;
+		pos = ol.proj.fromLonLat([lng, lat])
+	}
+*/
 	function getOrCreateGpsLayer(lat, lon) {
 		if ($scope.gpsLayer)
 			return $scope.gpsLayer;
