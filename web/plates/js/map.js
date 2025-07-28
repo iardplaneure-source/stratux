@@ -9,6 +9,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 
 	$scope.aircraftSymbols = new ol.source.Vector();
 	$scope.metarSymbols = new ol.source.Vector();
+	$scope.windBarbSymbols = new ol.source.Vector();
 	$scope.aircraftTrails = new ol.source.Vector();
 
 	let osm = new ol.layer.Tile({
@@ -86,6 +87,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		$scope.map.addLayer(aircraftSymbolsLayer);
 		$scope.map.addLayer(aircraftTrailsLayer);
 		$scope.map.addLayer(metarSymbolLayer);
+		$scope.map.addLayer(windBarbSymbolsLayer);
 
 		// Restore layer visibility
 		$scope.map.getLayers().forEach((layer) => {
@@ -118,6 +120,11 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		title: 'Aircraft trails 5NM',
 		source: $scope.aircraftTrails,
 		zIndex: 9
+	});
+	let windBarbSymbolsLayer = new ol.layer.Vector({
+		title: 'WindBarb symbols',
+		source: $scope.windBarbSymbols,
+		zIndex: 7
 	});
 	let metarSymbolLayer = new ol.layer.Vector({
 		title: 'METAR symbols',
@@ -290,6 +297,69 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		}
 	}
 
+	function extractTemperature(metar) {
+		const tempRegex = /\b(M?\d{2})\/(M?\d{2})\b/;
+		const match = metar.match(tempRegex);
+
+		if (!match) return 0;
+
+		const parseTemp = (s) => s.startsWith("M") ? -parseInt(s.slice(1), 10) : parseInt(s, 10);
+		const toF = (c) => Math.round((c * 9) / 5 + 32);
+
+		val = toF(parseTemp(match[1]));
+		console.log("extractTemperature returns " + val);
+		return val;
+	}
+
+	function extractWindGroup(metar) {
+		const tokens = metar.split(/\s+/);
+		const windRegex = /^(\d{3}|VRB)\d{2,3}(G\d{2,3})?(KT|MPS|KMH)$/;
+
+		for (let i = 0; i < tokens.length; i++) {
+			if (windRegex.test(tokens[i])) {
+				let wind = tokens[i];
+				let varDir = null;
+
+				// Check if next token is a variable wind direction (e.g. 180V240)
+				if (i + 1 < tokens.length && /^\d{3}V\d{3}$/.test(tokens[i + 1])) {
+					varDir = tokens[i + 1];
+				}
+
+				return {
+					wind,
+					varDir
+				};
+			}
+		}
+
+		return null;
+	}
+
+	function parseWindGroup(group, varDir = null) {
+		const regex = /^(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?(KT)$/;
+		const match = group.match(regex);
+
+		if (!match) return null;
+
+		const parsed = {
+			direction: match[1] === "VRB" ? "Variable" : parseInt(match[1], 10),
+			speed: parseInt(match[2], 10),
+			gust: match[4] ? parseInt(match[4], 10) : null,
+			varFrom: null,
+			varTo: null
+		};
+
+		if (varDir) {
+			const varMatch = varDir.match(/^(\d{3})V(\d{3})$/);
+			if (varMatch) {
+				parsed.varFrom = parseInt(varMatch[1], 10);
+				parsed.varTo = parseInt(varMatch[2], 10);
+			}
+		}
+
+		return parsed;
+	}
+
 	function parseFlightCondition(msg, body) {
 			if ((msg !== "METAR") && (msg !== "SPECI"))
 					return 0;
@@ -335,6 +405,10 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			if ((visability >= 1) && (ceiling >= 5))
 					return 2;
 			return 1;
+	}
+
+	function createWindBarbSvg(windspeed) {
+		return 'img/windbarb15.svg';
 	}
 
 	function createPlaneSvg(aircraft) {
@@ -415,7 +489,6 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			prev = aircraft.posHistory[i];
 			if (dist >= 0.5)
 				break;
-			
 		}
 		if (dist != 0 && i >= 0) {
 			return bearing(aircraft.posHistory[i][0], aircraft.posHistory[i][1], aircraft.Lng, aircraft.Lat);
@@ -445,7 +518,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			opacity = 1.0;
 		} else { // For other sources it's based on seconds
 			opacity = 1.0 - (aircraft.Age / TRAFFIC_MAX_AGE_SECONDS);
-		}		
+		}
 		aircraft.marker.getStyle().getImage().setOpacity(opacity);
 	}
 
@@ -641,7 +714,42 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		source.getFeatures()[0].setGeometry(geom);
 	}
 
+	function formatGusts(spd, gst) {
+		str = "";
+		if ((gst) && (gst != spd)) {
+			str = `G${gst}`;
+		}
+		return str;
+	}
+
+	function formatWinds(dir, spd, gst) {
+		str = `${dir}@${spd}`;
+		if ((gst) && (gst != spd)) {
+			str = str + `G${gst}`
+		}
+		return str;
+	}
+
+	function splitMETAR(metar) {
+		return metar.trim().split(/\s+/);
+	}
+
+	function getConditionWords(metar) {
+		let retstr="";
+		const words = splitMETAR(metar);
+		for (const token of words) {
+			if (token.includes("RA")) { retstr += "RA"; return retstr }
+			if ((token.includes("SN")) && (!token.includes("TSNO"))&& (!token.includes("DSNT"))) { retstr += "SN"; return retstr }
+			if (token.includes("TS")) { retstr += "TS"; return retstr }
+			if (token.includes("HZ")) { retstr += "HZ"; return retstr }
+			if (token.includes("FG")) { retstr += "FG"; return retstr }
+			if (token.includes("FU")) { retstr += "FU"; return retstr }
+		}
+		return retstr;
+	}
+
 	function updateWeather(msg) {
+		let now = Date.now();
 		const msgType = msg.Type;
 		msgLocation = msg.Location;
 		const msgTime = msg.Time;
@@ -672,6 +780,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			// its a TAF
 			const result = findAirportByICAO(msgLocation);
 			if (result) {
+				result.age=now;
 				result.ICAO = msgLocation;
 				result.TAF = msgLocation + " " + msgData;
 				let updateIndex = -1;
@@ -691,6 +800,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		if ((msgType == "METAR") || (msgType == "SPECI")) {
 			const result = findAirportByICAO(msgLocation);
 			if (result) {
+				result.age=now;
 				result.ICAO = msgLocation;
 				result.Data = msgLocation + " " + msgData;
 				let updateIndex = -1;
@@ -706,15 +816,35 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 				if (updateIndex < 0) {
 					$scope.metarList.push(result);
 				}
-
+				let windDir = 0;
+				let windSpeed = 0;
+				let windGust = 0;
+				const winddata = extractWindGroup(msgData);
+				if (winddata) {
+					const parsed = parseWindGroup(winddata.wind, winddata.varDir)
+					const { direction, speed, gust } = parsed;
+					windDir = direction;
+					windSpeed = speed;
+					windGust = gust;
+					dirRadians = toRadians(direction);
+					console.log(`Parsed winds for ${msgLocation} to be ${direction}@${speed}`);
+					console.log(parsed);
+				}
+				else {
+					dirRadians = 0;
+				}
+				//  + "\n" + formatGusts(windSpeed, windGust),
 				let metarPosition = [result.lng, result.lat];
 				if (!result.marker) {
 					let metarStyle = new ol.style.Style({
 						text: new ol.style.Text({
 							text: result.ICAO,
-							offsetY: 10,
+							offsetX: -15,
+							offsetY: 1,
+							textAlign: 'right',
+							scale: 0.8,
 							font: 'bold 1em sans-serif',
-							stroke: new ol.style.Stroke({color: 'white', width: 1.5}),
+							stroke: new ol.style.Stroke({color: 'white', width: 1}),
 						})
 					});
 					let metarFeature = new ol.Feature({
@@ -727,6 +857,83 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 				} else {
 					result.marker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
 				}
+				ourTemp = extractTemperature(msgData);
+				if (ourTemp < 80) {
+					tempColor = "blue";
+				} else {
+					tempColor = "red";
+				}
+				// Get the condition hit words
+				condWords = getConditionWords(msgData);
+				if (condWords.length > 0) {
+					if (!result.condmarker) {
+						let metarcondStyle = new ol.style.Style({
+							text: new ol.style.Text({
+								text: String(condWords),
+								offsetX: 20,
+								offsetY: 12,
+								textAlign: 'left',
+								scale: 0.8,
+								font: 'bold 1em sans-serif',
+								stroke: new ol.style.Stroke({color: 'red', width: 0.8}),
+							})
+						});
+						let metarcondFeature = new ol.Feature({
+							geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+						});
+						metarcondFeature.setStyle(metarcondStyle);
+
+						result.condmarker = metarcondFeature;
+						$scope.metarSymbols.addFeature(metarcondFeature);
+					} else {
+						result.condmarker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+					}
+				} else {
+					if (result.condmarker)
+						$scope.metarSymbols.removeFeature(result.condmarker);
+					// Remove that marker
+				}
+				if (!result.tempmarker) {
+					let metartempStyle = new ol.style.Style({
+						text: new ol.style.Text({
+							text: String(ourTemp),
+							offsetX: 0,
+							offsetY: 12,
+							textAlign: 'center',
+							scale: 0.8,
+							font: 'bold 1em sans-serif',
+							stroke: new ol.style.Stroke({color: tempColor, width: 0.8}),
+						})
+					});
+					let metartempFeature = new ol.Feature({
+						geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+					});
+					metartempFeature.setStyle(metartempStyle);
+
+					result.tempmarker = metartempFeature;
+					$scope.metarSymbols.addFeature(metartempFeature);
+				} else {
+					result.tempmarker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+				}
+				if (!result.windbarb) {
+					let windBarbStyle = new ol.style.Style({
+						text: new ol.style.Text({
+							text: '',
+							offsetY: 10,
+							font: 'bold 1em sans-serif',
+							stroke: new ol.style.Stroke({color: 'black', width: 0.8}),
+						})
+					});
+					let windBarbFeature = new ol.Feature({
+						geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+					});
+					windBarbFeature.setStyle(windBarbStyle);
+
+					result.windbarb = windBarbFeature;
+					$scope.windBarbSymbols.addFeature(windBarbFeature);
+				} else {
+					result.windbarb.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+				}
 				const cond = parseFlightCondition(msgType, msgData);
 				const icon = createMETARSvg(0);
 				const mcolor = getMetarColor(cond);
@@ -734,12 +941,24 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 					opacity: 1.0,
 					src: 'img/dot.svg',
 					color: mcolor,
-					scale: 2,
-					anchor: [0.5, 0.5],
+					scale: 1,
+					anchor: [0.50, 0.50],
 					anchorXUnits: 'fraction',
 					anchorYUnits: 'fraction'
 				});
 				result.marker.getStyle().setImage(imageStyle); // to update the color if latest source changed
+
+				let imageStyleBarb = new ol.style.Icon({
+					opacity: 1.0,
+					src: 'img/windbarb15.svg',
+					color: 'black',
+					scale: 0.35,
+					rotation: dirRadians,
+					anchor: [0.02, 1.08],
+					anchorXUnits: 'fraction',
+					anchorYUnits: 'fraction'
+				});
+				result.windbarb.getStyle().setImage(imageStyleBarb);
 				//updateOpacity(result);
 				
 				//updateMetarLocation(result.ICAO, result.lat, result.lng, result.data);
