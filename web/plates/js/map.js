@@ -76,7 +76,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						url: URL_GET_TILE + '/' + file  + '/{z}/{x}/{-y}.' + format,
 						maxZoom: maxzoom,
 						minZoom: minzoom,
-					})						
+					})
 				});
 			}
 			if (baselayer)
@@ -377,14 +377,15 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 					exp = new RegExp("([0-9/]{1,5}?)SM");
 					match = exp.exec(body);
 					if (match === null)
-							return 0;
+							return 4;
 					// the only way we have 3 or more characters is if the '/' is present which means we need to do extra checking
 					if (match[1].length === 3)
 							return 1;
 					// do we have a usable visability distance
 					var visability = parseInt(match[1]);
-					if (visability === 0)
-							return 0;
+					// If not, assume we are VFR
+					//if (visability === 0)
+					//		return 4;
 			}
 
 			// ceiling is at either the BKN or OVC layer
@@ -733,19 +734,38 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 	function splitMETAR(metar) {
 		return metar.trim().split(/\s+/);
 	}
+	function appendStringWithSpace(str, token) {
+		console.log(`append ${str} with ${token} `);
+		if (str.length>0)
+			str += " ";
+		str += token;
+		return str;
+	}
 
 	function getConditionWords(metar) {
 		let retstr="";
+		let afterRemark = false;
 		const words = splitMETAR(metar);
 		for (const token of words) {
-			if (token.includes("RA")) { retstr += "RA"; return retstr }
+			if (token.includes("RMK")) { afterRemark=true; return retstr; }
+			if ((token.includes("RA")) && (!afterRemark)) {  retstr=appendStringWithSpace(retstr,token) }
 			if ((token.includes("SN")) && (!token.includes("TSNO"))&& (!token.includes("DSNT"))) { retstr += "SN"; return retstr }
-			if (token.includes("TS")) { retstr += "TS"; return retstr }
-			if (token.includes("HZ")) { retstr += "HZ"; return retstr }
-			if (token.includes("FG")) { retstr += "FG"; return retstr }
-			if (token.includes("FU")) { retstr += "FU"; return retstr }
+			if ((token.includes("TS")) && (!afterRemark)) {  retstr=appendStringWithSpace(retstr,token) }
+			if (token.includes("HZ")) { retstr=appendStringWithSpace(retstr,"HZ");  }
+			if (token.includes("FG")) { retstr=appendStringWithSpace(retstr,"FG");  }
+			if (token.includes("FU")) { retstr=appendStringWithSpace(retstr,"FU"); }
 		}
 		return retstr;
+	}
+
+	function hasLightning(metar) {
+		let afterRemark = false;
+		const words = splitMETAR(metar);
+		for (const token of words) {
+			if (token.includes("RMK")) { afterRemark=true; }
+			if ((token.includes("LTG")) && (afterRemark)) { return true }
+		}
+		return false;
 	}
 
 	function updateWeather(msg) {
@@ -858,7 +878,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 					result.marker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
 				}
 				ourTemp = extractTemperature(msgData);
-				if (ourTemp < 80) {
+				if (ourTemp <= 32) {
 					tempColor = "blue";
 				} else {
 					tempColor = "red";
@@ -870,12 +890,13 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						let metarcondStyle = new ol.style.Style({
 							text: new ol.style.Text({
 								text: String(condWords),
-								offsetX: 20,
-								offsetY: 12,
+								offsetX: 12,
+								offsetY: 1,
 								textAlign: 'left',
-								scale: 0.8,
+								scale: 0.9,
+								fill: new ol.style.Fill({color: 'red'}),
 								font: 'bold 1em sans-serif',
-								stroke: new ol.style.Stroke({color: 'red', width: 0.8}),
+								stroke: new ol.style.Stroke({color: 'white', width: 0.8}),
 							})
 						});
 						let metarcondFeature = new ol.Feature({
@@ -901,6 +922,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 							offsetY: 12,
 							textAlign: 'center',
 							scale: 0.8,
+							fill: new ol.style.Fill({color: tempColor}),
 							font: 'bold 1em sans-serif',
 							stroke: new ol.style.Stroke({color: tempColor, width: 0.8}),
 						})
@@ -952,13 +974,27 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 					opacity: 1.0,
 					src: 'img/windbarb15.svg',
 					color: 'black',
-					scale: 0.35,
+					scale: 0.30,
 					rotation: dirRadians,
 					anchor: [0.02, 1.08],
 					anchorXUnits: 'fraction',
 					anchorYUnits: 'fraction'
 				});
 				result.windbarb.getStyle().setImage(imageStyleBarb);
+				/*
+				if (hasLightning(msgData)) {
+					let imageStyleLightning = new ol.style.Icon({
+						opacity: 1.0,
+						src: 'img/lightning.png',
+						scale: 0.30,
+						anchor: [0.5, 0.5],
+						anchorXUnits: 'fraction',
+						anchorYUnits: 'fraction'
+					});
+					result.lightningicon.getStyle().setImage(imageStyleLightning);
+				}
+				*/
+				
 				//updateOpacity(result);
 				
 				//updateMetarLocation(result.ICAO, result.lat, result.lng, result.data);
