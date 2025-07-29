@@ -981,19 +981,41 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 					anchorYUnits: 'fraction'
 				});
 				result.windbarb.getStyle().setImage(imageStyleBarb);
-				/*
+
+				// If the station has lightning, then add an icon.. If not, then delete any reference to it
+
 				if (hasLightning(msgData)) {
-					let imageStyleLightning = new ol.style.Icon({
-						opacity: 1.0,
-						src: 'img/lightning.png',
-						scale: 0.30,
-						anchor: [0.5, 0.5],
-						anchorXUnits: 'fraction',
-						anchorYUnits: 'fraction'
-					});
-					result.lightningicon.getStyle().setImage(imageStyleLightning);
+					if (!result.lightningIcon) {
+
+						let lightningIconFeature = new ol.Feature({
+							geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+						});
+
+						lightningIconFeature.setStyle(new ol.style.Style({
+							image: new ol.style.Icon({
+								opacity: 1.0,
+								src: 'img/lightning.png',
+								scale: 0.80,
+								anchor: [0.0, 0.8],
+								anchorXUnits: 'fraction',
+								anchorYUnits: 'fraction'
+							})
+						}));
+
+						result.lightningIcon = lightningIconFeature;
+						$scope.metarSymbols.addFeature(lightningIconFeature);
+					} else {
+						result.lightningIcon.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+					}
+
+					//result.lightningicon.getStyle().setImage(imageStyleLightning);
+				} else {
+					if (result.lightningIcon) {
+						$scope.metarSymbols.removeFeature(result.lightningIcon);
+						result.lightningIcon = null;
+					}
 				}
-				*/
+				
 				
 				//updateOpacity(result);
 				
