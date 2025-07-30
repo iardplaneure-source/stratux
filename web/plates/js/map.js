@@ -127,12 +127,12 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		title: 'WindBarb symbols',
 		minZoom: 7,
 		source: $scope.windBarbSymbols,
-		zIndex: 7
+		zIndex: 8
 	});
 	let metarSymbolLayer = new ol.layer.Vector({
 		title: 'METAR symbols',
 		source: $scope.metarSymbols,
-		zIndex: 8
+		zIndex: 7
 	});
 
 	$scope.map = new ol.Map({
@@ -525,6 +525,55 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		aircraft.marker.getStyle().getImage().setOpacity(opacity);
 	}
 
+
+
+	function updateMetarOpacity(met) {
+		let opacity = 1.0 - (met.Age / 1800);
+		if (opacity < 0.1) opacity = 0.1;
+
+		const setImageOpacity = (feature) => {
+			if (feature && feature.getStyle && feature.getStyle()) {
+				const img = feature.getStyle().getImage?.();
+				if (img) {
+					img.setOpacity(opacity);
+				}
+			}
+		};
+
+		const setTextOpacity = (feature) => {
+			if (feature && feature.getStyle && feature.getStyle()) {
+				const text = feature.getStyle().getText?.();
+				if (text) {
+					const fill = text.getFill();
+					if (fill) fill.setColor(applyAlpha(fill.getColor(), opacity));
+					const stroke = text.getStroke?.();
+					if (stroke) stroke.setColor(applyAlpha(stroke.getColor(), opacity));
+				}
+			}
+		};
+
+		// Helper to apply alpha to an rgba or hex color
+		function applyAlpha(color, alpha) {
+			if (typeof color === 'string') {
+				// Assume a CSS color string — try parsing
+				let rgba = ol.color.asArray(color);
+				rgba[3] = alpha;
+				return rgba;
+			}
+			if (Array.isArray(color)) {
+				return [...color.slice(0, 3), alpha];
+			}
+			return color; // fallback
+		}
+
+		setTextOpacity(met.marker);
+		setImageOpacity(met.marker);
+		setTextOpacity(met.condmarker);
+		setImageOpacity(met.lightningIcon);
+		setTextOpacity(met.tempmarker);
+		setImageOpacity(met.windbarb);
+	}
+
 	function updateVehicleText(aircraft) {
 		let text = [];
 		if (aircraft.Tail.length > 0)
@@ -687,10 +736,12 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 //			console.log(`Age of ${met.ICAO} is ${met.Age}`);
 //			console.log(met);
 			if (met.Age) {
-				if (met.Age > 3600) {
+				if (met.Age > 1800) {
 //					console.log(`Age here was ${met.Age}`);
 					if (met.marker !== undefined)
 						$scope.metarSymbols.removeFeature(met.marker);
+					if (met.gustmarker !== undefined)
+						$scope.metarSymbols.removeFeature(met.gustmarker);
 					if (met.condmarker  !== undefined)
 						$scope.metarSymbols.removeFeature(met.condmarker);
 					if (met.lightningIcon !== undefined)
@@ -701,7 +752,10 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						$scope.windBarbSymbols.removeFeature(met.windbarb);
 //					console.log(`Deleting station ${met.ICAO}`);
 					$scope.metarList.splice(i,1);
+					} else {
+//						updateMetarOpacity(met);
 					}
+
 				}
 			}
 		}
@@ -930,10 +984,10 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						let metarcondStyle = new ol.style.Style({
 							text: new ol.style.Text({
 								text: String(condWords),
-								offsetX: 12,
+								offsetX: 18,
 								offsetY: 1,
 								textAlign: 'left',
-								scale: 0.9,
+								scale: 0.75,
 								fill: new ol.style.Fill({color: 'red'}),
 								font: 'bold 1em sans-serif',
 								stroke: new ol.style.Stroke({color: 'white', width: 0.8}),
@@ -954,6 +1008,39 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						$scope.metarSymbols.removeFeature(result.condmarker);
 					// Remove that marker
 				}
+				if ((windGust > 0) && (windGust != windSpeed)) {
+					const gustWords = `G${windGust}`;
+					const gustRotation = toRadians(30);
+					if (!result.gustmarker) {
+						let gustStyle = new ol.style.Style({
+							text: new ol.style.Text({
+								text: gustWords,
+								offsetX: 14,
+								offsetY: 3,
+								textAlign: 'left',
+								scale: 0.7,
+								rotation: gustRotation,
+								fill: new ol.style.Fill({color: 'red'}),
+								font: 'bold 1em sans-serif',
+								stroke: new ol.style.Stroke({color: 'red', width: 0.7}),
+							})
+						});
+						let gustFeature = new ol.Feature({
+							geometry: new ol.geom.Point(metarCoords)
+						});
+						gustFeature.setStyle(gustStyle);
+
+						result.gustmarker = gustFeature;
+						$scope.metarSymbols.addFeature(gustFeature);
+					} else {
+						result.gustmarker.getGeometry().setCoordinates(metarCoords);
+					}
+				} else {
+					if (result.gustmarker)
+						$scope.metarSymbols.removeFeature(result.gustmarker);
+					// Remove that marker
+				}
+
 				if (!result.tempmarker) {
 					let metartempStyle = new ol.style.Style({
 						text: new ol.style.Text({
@@ -964,7 +1051,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 							scale: 0.8,
 							fill: new ol.style.Fill({color: tempColor}),
 							font: 'bold 1em sans-serif',
-							stroke: new ol.style.Stroke({color: tempColor, width: 0.8}),
+							stroke: new ol.style.Stroke({color: 'white', width: 0.8}),
 						})
 					});
 					let metartempFeature = new ol.Feature({
@@ -999,6 +1086,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 				const cond = parseFlightCondition(msgType, msgData);
 				const icon = createMETARSvg(0);
 				const mcolor = getMetarColor(cond);
+
 				let imageStyle = new ol.style.Icon({
 					opacity: 1.0,
 					src: 'img/dot.svg',
@@ -1036,7 +1124,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 								opacity: 1.0,
 								src: 'img/lightning.png',
 								scale: 0.80,
-								anchor: [0.0, 0.8],
+								anchor: [0.0, 0.9],
 								anchorXUnits: 'fraction',
 								anchorYUnits: 'fraction'
 							})
