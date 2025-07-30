@@ -1,6 +1,8 @@
 angular.module('appControllers').controller('MapCtrl', MapCtrl);           // get the main module contollers set
 MapCtrl.$inject = ['$rootScope', '$scope', '$state', '$http', '$interval', 'craftService'];  // Inject my dependencies
 
+// @ts-check
+/** @type {import("ol/Map").default} */
 
 function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 	let TRAFFIC_MAX_AGE_SECONDS = 15;
@@ -26,7 +28,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			url: 'https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=f64474b4ab9d2f6bacb2f30d4680e8ae'
 		})
 	});
-	
+
 
 	// Dynamic MBTiles layers
 	$http.get(URL_GET_TILESETS).then(function(response) {
@@ -39,7 +41,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			let minzoom = meta.minzoom ? parseInt(meta.minzoom) : 1;
 			let maxzoom = meta.maxzoom ? parseInt(meta.maxzoom) : 18;
 			let styleurl = meta.stratux_style_url
-			
+
 			let ext = [-180, -85, 180, 85];
 			if (meta.bounds) {
 				ext = meta.bounds.split(',').map(Number)
@@ -123,6 +125,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 	});
 	let windBarbSymbolsLayer = new ol.layer.Vector({
 		title: 'WindBarb symbols',
+		minZoom: 7,
 		source: $scope.windBarbSymbols,
 		zIndex: 7
 	});
@@ -161,7 +164,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 	popup.setPosition(undefined);
 	closer.blur();
 	return false;
-	};	
+	};
 	$scope.map.addControl(new ol.control.LayerSwitcher());
 	// change mouse cursor when over marker
 	$scope.map.on('pointermove', function (e) {
@@ -247,7 +250,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		if (($scope.socketgps === undefined) || ($scope.socketgps === null)) {
             var socketgps = new WebSocket(URL_GPS_WS);
             $scope.socketgps = socketgps; // store socket in scope for enter/exit usage
-  
+
 
 			socketgps.onclose = function (msg) {
 				delete $scope.socketgps;
@@ -273,7 +276,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		}
 	}
 
-	/** 
+	/**
 		Returns path to SVG icon and bool indicating if it's a rotatable icon (not ballon/skydiver)
 	 */
 	function createMETARSvg(value) {
@@ -307,7 +310,6 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		const toF = (c) => Math.round((c * 9) / 5 + 32);
 
 		val = toF(parseTemp(match[1]));
-		console.log("extractTemperature returns " + val);
 		return val;
 	}
 
@@ -414,7 +416,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 
 	function createPlaneSvg(aircraft) {
 		let html = ``;
-		let color = craftService.getTransportColor(aircraft);	
+		let color = craftService.getTransportColor(aircraft);
 		if (aircraft.TargetType === TARGET_TYPE_AIS)
 			return ['img/actype/vessel.svg', true];
 
@@ -447,7 +449,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 	function toRadians(degrees) {
 		return degrees * Math.PI / 180;
 	};
-	
+
 	// Converts from radians to degrees.
 	function toDegrees(radians) {
 		return radians * 180 / Math.PI;
@@ -469,13 +471,13 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 	function distance(lon1, lat1, lon2, lat2) {
 		var R = 6371; // Radius of the earth in km
 		var dLat = toRadians(lat2-lat1);  // deg2rad below
-		var dLon = toRadians(lon2-lon1); 
-		var a = 
+		var dLon = toRadians(lon2-lon1);
+		var a =
 			Math.sin(dLat/2) * Math.sin(dLat/2) +
-			Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * 
+			Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) *
 			Math.sin(dLon/2) * Math.sin(dLon/2)
-			; 
-		var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+			;
+		var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 		var d = R * c; // Distance in km
 		return d;
 	}
@@ -656,6 +658,17 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		aircraft.marker.getStyle().getImage().setRotation(toRadians(aircraft.Track));
 	}
 
+	$scope.updateMetarAges = function() {
+		let now = Date.now();
+		for (let met of $scope.metarList) {
+			if (met.ageRx)
+			{
+				met.Age = (now - met.ageRx) / 1000.0;
+//				console.log(`updateMetarAge of ${met.ICAO} to ${met.Age}`);
+			}
+ 		}
+	}
+
 	$scope.updateAges = function() {
 		let now = Date.now();
 		for (let ac of $scope.aircraft) {
@@ -666,6 +679,33 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 			updateOpacity(ac);
 		}
 	}
+
+	$scope.removeStaleMetars = function() {
+		let now = Date.now();
+		for (let i = $scope.metarList.length - 1; i >= 0; i--) {
+			let met = $scope.metarList[i];
+//			console.log(`Age of ${met.ICAO} is ${met.Age}`);
+//			console.log(met);
+			if (met.Age) {
+				if (met.Age > 3600) {
+//					console.log(`Age here was ${met.Age}`);
+					if (met.marker !== undefined)
+						$scope.metarSymbols.removeFeature(met.marker);
+					if (met.condmarker  !== undefined)
+						$scope.metarSymbols.removeFeature(met.condmarker);
+					if (met.lightningIcon !== undefined)
+						$scope.metarSymbols.removeFeature(met.lightningIcon);
+					if (met.tempmarker !== undefined)
+						$scope.metarSymbols.removeFeature(met.tempmarker);
+					if (met.windbarb !== undefined)
+						$scope.windBarbSymbols.removeFeature(met.windbarb);
+//					console.log(`Deleting station ${met.ICAO}`);
+					$scope.metarList.splice(i,1);
+					}
+				}
+			}
+		}
+
 
 	$scope.removeStaleTraffic = function() {
 		let now = Date.now();
@@ -684,7 +724,9 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 
 	$scope.update = function() {
 		$scope.updateAges();
+		$scope.updateMetarAges();
 		$scope.removeStaleTraffic();
+		$scope.removeStaleMetars();
 	}
 
 	function updateMyLocation(msg) {
@@ -735,7 +777,6 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		return metar.trim().split(/\s+/);
 	}
 	function appendStringWithSpace(str, token) {
-		console.log(`append ${str} with ${token} `);
 		if (str.length>0)
 			str += " ";
 		str += token;
@@ -774,12 +815,13 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 		msgLocation = msg.Location;
 		const msgTime = msg.Time;
 		const msgData = msg.Data;
-		console.log("Received weather update type " + msgType + ". location is: " + msgLocation + " text:\n " + msgData);
+//		console.log("Received weather update type " + msgType + ". location is: " + msgLocation + " text:\n " + msgData);
 		if ((msgType == "WINDS")) {
 			// its a Wind report
 			msgLocation = "K" + msgLocation;
 			const result = findAirportByICAO(msgLocation);
 			if (result) {
+				result.ageRx=now;
 				result.ICAO = msgLocation;
 				result.WINDS = msgLocation + " " + msgData;
 				let updateIndex = -1;
@@ -793,14 +835,14 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 				if (updateIndex < 0) {
 					$scope.metarList.push(result);
 				}
-				console.log("Added WINDS to " + msgLocation + " Index " + updateIndex);
+//				console.log("Added WINDS to " + msgLocation + " Index " + updateIndex);
 			}
 		}
 		if ((msgType == "TAF") || (msgType == "TAF.AMD")) {
 			// its a TAF
 			const result = findAirportByICAO(msgLocation);
 			if (result) {
-				result.age=now;
+				result.ageRx=now;
 				result.ICAO = msgLocation;
 				result.TAF = msgLocation + " " + msgData;
 				let updateIndex = -1;
@@ -814,13 +856,14 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 				if (updateIndex < 0) {
 					$scope.metarList.push(result);
 				}
-				console.log("Added TAF to " + msgLocation + " Index " + updateIndex);
+//				console.log("Added TAF to " + msgLocation + " Index " + updateIndex);
 			}
 		}
 		if ((msgType == "METAR") || (msgType == "SPECI")) {
 			const result = findAirportByICAO(msgLocation);
 			if (result) {
-				result.age=now;
+
+				result.ageRx=now;
 				result.ICAO = msgLocation;
 				result.Data = msgLocation + " " + msgData;
 				let updateIndex = -1;
@@ -847,14 +890,15 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 					windSpeed = speed;
 					windGust = gust;
 					dirRadians = toRadians(direction);
-					console.log(`Parsed winds for ${msgLocation} to be ${direction}@${speed}`);
-					console.log(parsed);
+//					console.log(`Parsed winds for ${msgLocation} to be ${direction}@${speed}`);
+//					console.log(parsed);
 				}
 				else {
 					dirRadians = 0;
 				}
 				//  + "\n" + formatGusts(windSpeed, windGust),
 				let metarPosition = [result.lng, result.lat];
+				const metarCoords = ol.proj.fromLonLat(metarPosition);
 				if (!result.marker) {
 					let metarStyle = new ol.style.Style({
 						text: new ol.style.Text({
@@ -868,21 +912,17 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						})
 					});
 					let metarFeature = new ol.Feature({
-						geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+						geometry: new ol.geom.Point(metarCoords)
 					});
 					metarFeature.setStyle(metarStyle);
 
 					result.marker = metarFeature;
 					$scope.metarSymbols.addFeature(metarFeature);
 				} else {
-					result.marker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+					result.marker.getGeometry().setCoordinates(metarCoords);
 				}
 				ourTemp = extractTemperature(msgData);
-				if (ourTemp <= 32) {
-					tempColor = "blue";
-				} else {
-					tempColor = "red";
-				}
+				const tempColor = ourTemp <= 32 ? 'blue' : 'red';
 				// Get the condition hit words
 				condWords = getConditionWords(msgData);
 				if (condWords.length > 0) {
@@ -900,14 +940,14 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 							})
 						});
 						let metarcondFeature = new ol.Feature({
-							geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+							geometry: new ol.geom.Point(metarCoords)
 						});
 						metarcondFeature.setStyle(metarcondStyle);
 
 						result.condmarker = metarcondFeature;
 						$scope.metarSymbols.addFeature(metarcondFeature);
 					} else {
-						result.condmarker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+						result.condmarker.getGeometry().setCoordinates(metarCoords);
 					}
 				} else {
 					if (result.condmarker)
@@ -928,14 +968,14 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						})
 					});
 					let metartempFeature = new ol.Feature({
-						geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+						geometry: new ol.geom.Point(metarCoords)
 					});
 					metartempFeature.setStyle(metartempStyle);
 
 					result.tempmarker = metartempFeature;
 					$scope.metarSymbols.addFeature(metartempFeature);
 				} else {
-					result.tempmarker.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+					result.tempmarker.getGeometry().setCoordinates(metarCoords);
 				}
 				if (!result.windbarb) {
 					let windBarbStyle = new ol.style.Style({
@@ -947,14 +987,14 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						})
 					});
 					let windBarbFeature = new ol.Feature({
-						geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+						geometry: new ol.geom.Point(metarCoords)
 					});
 					windBarbFeature.setStyle(windBarbStyle);
 
 					result.windbarb = windBarbFeature;
 					$scope.windBarbSymbols.addFeature(windBarbFeature);
 				} else {
-					result.windbarb.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+					result.windbarb.getGeometry().setCoordinates(metarCoords);
 				}
 				const cond = parseFlightCondition(msgType, msgData);
 				const icon = createMETARSvg(0);
@@ -988,7 +1028,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 					if (!result.lightningIcon) {
 
 						let lightningIconFeature = new ol.Feature({
-							geometry: new ol.geom.Point(ol.proj.fromLonLat(metarPosition))
+							geometry: new ol.geom.Point(metarCoords)
 						});
 
 						lightningIconFeature.setStyle(new ol.style.Style({
@@ -1005,7 +1045,7 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						result.lightningIcon = lightningIconFeature;
 						$scope.metarSymbols.addFeature(lightningIconFeature);
 					} else {
-						result.lightningIcon.getGeometry().setCoordinates(ol.proj.fromLonLat(metarPosition));
+						result.lightningIcon.getGeometry().setCoordinates(metarCoords);
 					}
 
 					//result.lightningicon.getStyle().setImage(imageStyleLightning);
@@ -1015,24 +1055,13 @@ function MapCtrl($rootScope, $scope, $state, $http, $interval, craftService) {
 						result.lightningIcon = null;
 					}
 				}
-				
-				
-				//updateOpacity(result);
-				
-				//updateMetarLocation(result.ICAO, result.lat, result.lng, result.data);
 			} else {
 				console.log("Airport " + msgLocation + " not found!!!");
 			}
 		}
-//{"Type":"METAR","Location":"KGEZ","Time":"061953Z","Data":"AUTO 21013G20KT 10SM FEW120 31/22 A2992 RMK AO2  \n     SLP124 T03060222=\n","LocaltimeReceived":"0001-01-03T20:58:08.22Z"		
+//{"Type":"METAR","Location":"KGEZ","Time":"061953Z","Data":"AUTO 21013G20KT 10SM FEW120 31/22 A2992 RMK AO2  \n     SLP124 T03060222=\n","LocaltimeReceived":"0001-01-03T20:58:08.22Z"
 	}
-/*
-    function getOrCreateMetarLayer(lat, lng) {
-		if ($scope.metarSymbolLayer)
-			return $scope.metarSymbolLayer;
-		pos = ol.proj.fromLonLat([lng, lat])
-	}
-*/
+
 	function getOrCreateGpsLayer(lat, lon) {
 		if ($scope.gpsLayer)
 			return $scope.gpsLayer;
