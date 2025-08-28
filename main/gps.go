@@ -319,6 +319,17 @@ func initGPSSerial() bool {
 		logInf("GPS - device detected at serial port /dev/serial0, assuming this is an ublox device, configuring as generic ublox:")
 		logChipConfig("", "generic ublox", device, targetBaudRate, "")
 		logInf("GPS - consider to configure this device manually in /boot/firmware/stratux.conf for optimal performance")
+	} else if _, err := os.Stat("/dev/ttyACM0"); err == nil {
+    device = "/dev/ttyACM0"
+    globalStatus.GPS_detected_type = GPS_TYPE_ANY
+    baudrates = []int{115200, 9600}
+    logChipConfig("auto", "generic NMEA (Septentrio?)", device, 115200, "")
+	} else if _, err := os.Stat("/dev/ttyACM1"); err == nil {
+    device = "/dev/ttyACM1"
+    globalStatus.GPS_detected_type = GPS_TYPE_ANY
+    baudrates = []int{115200, 9600}
+    logChipConfig("auto", "generic NMEA (Septentrio?)", device, 115200, "")
+	
 	} else {
 		logDbg("GPS - no gps device found.\n")
 		return false
